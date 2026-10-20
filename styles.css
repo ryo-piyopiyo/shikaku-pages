@@ -11,3 +11,29 @@
 @media(min-width:761px) and (max-width:960px){.exercise-layout{grid-template-columns:1fr}.answer-panel{position:static}.choice-grid{gap:14px}.answer-group{max-width:500px}.answer-card>.button.full{max-width:500px}.answer-card .unknown{margin-left:0}.answer-card .answer-result{max-width:500px}}
 
 .question-image-canvas{width:100%;margin:0 auto}
+.notes-grid.is-reading{grid-template-columns:minmax(0,1fr);max-width:880px;margin-inline:auto}
+.note-card,.explanation,.related-notes{overflow-wrap:anywhere}
+.note-card h4,.related-notes h4{font-size:16px;margin-top:28px;margin-bottom:12px}
+.note-situation{border-left:3px solid var(--gold);padding-left:18px;margin:25px 0}
+.note-situation h4{margin-top:0}
+.note-paragraph,.formula-reading,.note-situation p{line-height:2}
+.quantity-table{margin:14px 0 26px;border:1px solid var(--line);border-radius:8px}
+.quantity-table table{width:100%;min-width:0;table-layout:fixed;font-size:13px}
+.quantity-table th:first-child{width:25%}.quantity-table th:last-child{width:17%}
+.quantity-table td,.quantity-table th{white-space:normal;padding:13px 14px;vertical-align:top;line-height:1.8}
+.quantity-symbol{font-size:16px;font-weight:700}
+.formula{white-space:pre-wrap;line-height:1.9;overflow-wrap:anywhere}
+.worked-example ol,.note-card ol,.related-notes ol{line-height:2}
+.worked-example li+li,.note-card li+li,.related-notes li+li{margin-top:14px}
+.self-check{margin:24px 0;background:#f3f6ef;border-radius:8px;padding:16px 18px}
+.self-check summary{cursor:pointer;font-weight:700;line-height:1.8}
+.self-check p{margin:18px 0 0;line-height:2}
+.explanation-goal strong{display:block;margin-bottom:6px}
+.explanation h4{font-size:16px;margin-top:28px;margin-bottom:10px}
+.explanation-givens{font-size:14px;line-height:1.9}
+.explanation-principle{border-left:3px solid var(--gold);padding-left:20px;margin:24px 0}
+.explanation-principle h4{margin-top:0}
+.explanation-principle p{line-height:2}
+.explanation ol{line-height:2;white-space:pre-line}
+.explanation ol>li+li{margin-top:20px}
+@media(max-width:760px){.quantity-table table{font-size:12px}.quantity-table td,.quantity-table th{padding:10px 8px}.quantity-table th:first-child{width:28%}.quantity-table th:last-child{width:17%}.note-card p,.note-card li,.related-notes p,.related-notes li,.explanation p,.explanation li{font-size:14px;line-height:2}.explanation h4,.note-card h4,.related-notes h4{font-size:16px}.explanation-principle{padding-left:15px}.notes-grid.is-reading .note-card{padding:24px 20px}}

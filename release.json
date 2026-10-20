@@ -1,6 +1,6 @@
 {
-  "version": 1,
-  "builtAt": "2026-10-20T14:40:27.047Z",
+  "version": 2,
+  "builtAt": "2026-10-20T15:50:34.434Z",
   "coverage": {
     "firstYear": 2017,
     "lastYear": 2026,
@@ -10,5 +10,11 @@
     "questions": 924,
     "answers": 1120
   },
-  "dataSha256": "7989926bea8dc193222c42238d135637f3cafd764a17dc663ae0810755f01e7f"
+  "learning": {
+    "explanations": 924,
+    "notes": 28
+  },
+  "dataSha256": "7989926bea8dc193222c42238d135637f3cafd764a17dc663ae0810755f01e7f",
+  "explanationsSha256": "2dec4ee1606b5109b01f3d5b163c4d8e80a0e418c574ab5e9ad89639ff821467",
+  "knowledgeSha256": "8c52f94249a598727d893ff5cc21b3074bfce99599dc17d1572f2de21d5fec2b"
 }

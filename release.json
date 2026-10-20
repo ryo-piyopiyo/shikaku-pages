@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "builtAt": "2026-10-20T14:40:27.047Z",
+  "coverage": {
+    "firstYear": 2017,
+    "lastYear": 2026,
+    "years": 10,
+    "sessions": 14,
+    "papers": 56,
+    "questions": 924,
+    "answers": 1120
+  },
+  "dataSha256": "7989926bea8dc193222c42238d135637f3cafd764a17dc663ae0810755f01e7f"
+}

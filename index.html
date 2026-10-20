@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#183e37">
+  <meta name="apple-mobile-web-app-title" content="電験三種 学習室">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="description" content="電験三種の公式過去問を一問ずつ。理論・電力・機械・法規の演習、要点ノート、間違えた問題の復習、科目別の通し演習。">
+  <title>電験三種 学習室｜過去問と、わかるためのノート</title>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="apple-touch-icon.png">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="stylesheet" href="styles.css">
+  <script type="module" src="app.mjs"></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">本文へ移動</a>
+  <header class="topbar">
+    <div class="header-inner">
+      <a class="brand" href="#home" aria-label="電験三種 学習室 ホーム"><span class="brand-mark" aria-hidden="true">∿</span><span><small>第三種電気主任技術者</small><strong>電験三種 <span>学習室</span></strong></span></a>
+      <nav class="navigation" aria-label="メインメニュー">
+        <a href="#home" data-nav="home">ホーム</a>
+        <a href="#practice" data-nav="practice">過去問</a>
+        <a href="#notes" data-nav="notes">要点ノート</a>
+        <a href="#history" data-nav="history">学習記録</a>
+      </nav>
+    </div>
+  </header>
+  <div id="storageNotice" class="notice storage-notice" role="status" hidden></div>
+  <main id="main" class="shell" tabindex="-1"><div class="loading"><span class="loading-dot"></span><p>問題と学習記録を準備しています。</p></div></main>
+  <footer class="site-footer"><div><strong>電験三種 学習室</strong><span>ひとつ解いて、ひとつわかる。</span></div><p>公開筆記試験を使った個人学習用サイト。<a href="#about">収録内容・出典と使い方</a></p></footer>
+  <div id="toast" class="toast" role="status" hidden></div>
+  <dialog id="imageDialog" class="image-dialog" aria-label="問題画像の拡大"><div class="dialog-top"><p>問題画像を拡大</p><button type="button" data-action="close-image" class="button secondary">閉じる ×</button></div><div id="enlargedImages"></div></dialog>
+  <dialog id="confirmDialog" class="confirm-dialog" aria-labelledby="confirmTitle"><h2 id="confirmTitle"></h2><p id="confirmText"></p><div class="button-row"><button id="confirmYes" class="button primary" type="button"></button><button id="confirmNo" class="button secondary" type="button">戻る</button></div></dialog>
+  <noscript><p class="notice">この学習サイトにはJavaScriptが必要です。ブラウザーの設定で有効にしてください。</p></noscript>
+</body>
+</html>

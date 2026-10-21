@@ -1,4 +1,4 @@
-import { SUBJECTS, STORAGE_KEY, blankHistory, indexExams, answerKey, filterQuestions, questionStatus, statistics, gradePaper, paperQuestions, validateHistory, mergeHistory, relatedNotes, collectionSummary } from './core.mjs';
+import { SUBJECTS, STORAGE_KEY, blankHistory, indexExams, answerKey, filterQuestions, questionStatus, statistics, gradePaper, paperQuestions, validateHistory, validateRecords, mergeHistory, relatedNotes, collectionSummary } from './core.mjs?v=3';
 
 const $ = id => document.getElementById(id);
 const escape = value => String(value ?? '').replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[character]));
@@ -6,7 +6,7 @@ const dateLabel = value => new Intl.DateTimeFormat('ja-JP', { dateStyle: 'medium
 const uid = () => globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 const subjectOf = id => SUBJECTS.find(subject => subject.id === id);
 const statusLabel = { unseen: '未回答', correct: '自力で正解', review: '復習したい', partial: '回答途中' };
-const state = { data: null, notes: [], explanations: {}, index: null, history: blankHistory(), canSave: true, corruptRaw: null, lastRaw: null, filters: { subject: 'all', paper: 'all', status: 'all', section: 'all' }, practiceTab: 'single', noteSubject: 'all', resultId: null };
+const state = { data: null, notes: [], explanations: {}, index: null, history: blankHistory(), canSave: true, corruptRaw: null, lastRaw: null, filters: { subject: 'all', paper: 'all', status: 'all', section: 'all' }, pages: { practice: 1, bookmarks: 1, records: 1 }, noteSubject: 'all', resultId: null };
 let toastTimeout;
 
 function notify(message) {
@@ -18,21 +18,50 @@ function notify(message) {
 function mergeStored(raw, bookmark = null) {
   if (!raw || raw === state.lastRaw) return;
   const stored = JSON.parse(raw);
-  const merged = mergeHistory(state.history, stored, state.index.questions);
+  const merged = mergeHistory(state.history, stored, state.index.questions, state.index.papers);
   state.history.attempts = merged.history.attempts;
-  state.history.bookmarks = validateHistory(stored, state.index.questions).bookmarks;
-  if (bookmark) state.history.bookmarks = bookmark.add ? [...new Set([...state.history.bookmarks, bookmark.id])] : state.history.bookmarks.filter(id => id !== bookmark.id);
-  const records = new Map(validRecords(stored.records).map(record => [record.id, record]));
-  for (const record of state.history.records) records.set(record.id, record);
-  state.history.records = [...records.values()].sort((a, b) => a.endedAt.localeCompare(b.endedAt)).slice(-200);
+  state.history.bookmarks = validateHistory(stored, state.index.questions, state.index.papers).bookmarks;
+  if (bookmark) { const ids = bookmark.ids || [bookmark.id]; state.history.bookmarks = bookmark.add ? [...new Set([...state.history.bookmarks, ...ids])] : state.history.bookmarks.filter(id => !ids.includes(id)); }
+  state.history.records = merged.history.records;
   state.lastRaw = raw;
 }
 function save(bookmark = null) {
-  if (!state.canSave) return;
-  try { mergeStored(localStorage.getItem(STORAGE_KEY), bookmark); const raw = JSON.stringify(state.history); localStorage.setItem(STORAGE_KEY, raw); state.lastRaw = raw; }
-  catch { state.canSave = false; storageNotice('ブラウザーに保存できません。このページを閉じる前に「学習記録」から履歴を書き出してください。'); }
+  if (!state.canSave) return false;
+  try { const stored = localStorage.getItem(STORAGE_KEY); if (stored === null && state.lastRaw !== null) { pauseAfterDeletion(); return false; } mergeStored(stored, bookmark); const raw = JSON.stringify(state.history); localStorage.setItem(STORAGE_KEY, raw); state.lastRaw = raw; return true; }
+  catch { state.canSave = false; storageNotice('ブラウザーに保存できません。このページを閉じる前に「学習記録」から履歴を書き出してください。'); return false; }
 }
-function storageNotice(message) { $('storageNotice').textContent = message; $('storageNotice').hidden = false; }
+function storageNotice(message) { $('storageNotice').textContent = message; $('storageNotice').hidden = false; refreshSaveStatus(); }
+function pauseAfterDeletion() {
+  state.canSave = false;
+  storageNotice('別のタブで学習記録が消去されました。このタブを再読み込みするまで自動保存を止めています。必要な履歴は書き出せます。');
+}
+function saveDescription() {
+  return state.canSave ? '進み具合と解答はこのブラウザー内に保存します。「続きから解く」で再開できます。' : 'ブラウザーには保存できていません。このページを閉じる前に、学習記録からJSONを書き出してください。';
+}
+function refreshSaveStatus() {
+  const active = state.history.active;
+  const question = active && state.index ? currentQuestion() : null;
+  const answerNote = $('answerSaveNote');
+  if (answerNote) answerNote.textContent = answerSaveMessage(question?.answers.every(answer => active.choices[answerKey(question, answer.part)]));
+  const description = document.querySelector('.save-description');
+  if (description) description.textContent = saveDescription();
+}
+function answerSaveMessage(complete) {
+  if (!state.canSave) return 'このページ内だけに記録しています。閉じる前に、学習記録からJSONを書き出してください。';
+  return complete ? '✓ この大問の解答を保存しました。' : '選ぶたびに、途中の解答を保存します。';
+}
+function pageSlice(items, kind, size) {
+  const pages = Math.max(1, Math.ceil(items.length / size));
+  const page = Math.max(1, Math.min(pages, state.pages[kind] || 1));
+  state.pages[kind] = page;
+  const start = (page - 1) * size;
+  return { items: items.slice(start, start + size), page, pages, start: start + 1, end: Math.min(start + size, items.length), total: items.length };
+}
+function pagination(kind, view, label) {
+  if (view.pages <= 1) return '';
+  return `<nav class="list-pagination" data-list="${kind}" aria-label="${label}のページ切替"><button class="button secondary" data-action="list-page" data-list="${kind}" data-page="${view.page - 1}" ${view.page === 1 ? 'disabled' : ''} aria-label="${label}の前のページ">← 前へ</button><span class="pagination-status" tabindex="-1" aria-live="polite">${view.start}〜${view.end} / ${view.total}件<br><small>${view.page} / ${view.pages}ページ</small></span><button class="button secondary" data-action="list-page" data-list="${kind}" data-page="${view.page + 1}" ${view.page === view.pages ? 'disabled' : ''} aria-label="${label}の次のページ">次へ →</button></nav>`;
+}
+
 function validActive(active) {
   if (!active || !['practice', 'paper'].includes(active.mode) || typeof active.id !== 'string' || !Array.isArray(active.questionIds) || !active.questionIds.length || !active.questionIds.every(id => state.index.questions.has(id)) || !Number.isFinite(Date.parse(active.startedAt)) || !Number.isInteger(active.index) || active.index < 0 || active.index >= active.questionIds.length) return null;
   if (active.mode === 'paper' && !state.index.papers.has(active.paperId)) return null;
@@ -47,11 +76,7 @@ function validActive(active) {
   return { ...active, choices, graded: booleanMap(active.graded), assisted: booleanMap(active.assisted), flags: Array.isArray(active.flags) ? active.flags.filter(id => active.questionIds.includes(id)) : [], optional: active.optional === 18 ? 18 : 17 };
 }
 function validRecords(records) {
-  if (!Array.isArray(records)) return [];
-  return records.filter(record => {
-    const paper = state.index.papers.get(record.paperId);
-    return typeof record.id === 'string' && paper && record.choices && typeof record.choices === 'object' && !Array.isArray(record.choices) && Number.isFinite(Date.parse(record.endedAt)) && (!paper.optionalGroups.length || paper.optionalGroups.includes(record.optional));
-  }).slice(-200);
+  return validateRecords(records, state.index.questions, state.index.papers).slice(-200);
 }
 function load() {
   try {
@@ -62,8 +87,7 @@ function load() {
       const active = validActive(stored.active);
       if (stored.active && !active) throw new Error('途中の演習の形式が不正です。');
       const records = validRecords(stored.records);
-      if (Array.isArray(stored.records) && records.length !== Math.min(stored.records.length, 200)) throw new Error('通し演習の記録が不正です。');
-      state.history = { ...validateHistory(stored, state.index.questions), active, records }; state.lastRaw = raw;
+      state.history = { ...validateHistory(stored, state.index.questions, state.index.papers), active, records }; state.lastRaw = raw;
     } catch {
       state.corruptRaw = raw; state.canSave = false;
       storageNotice('保存されている履歴を読み込めませんでした。元のデータは上書きしていません。「学習記録」から退避できます。');
@@ -100,24 +124,31 @@ function renderHome() {
   <div class="source-strip"><span class="source-dot" aria-hidden="true"></span><p>電気技術者試験センターの公開問題・公式解答を収録。解説と要点ノートは、このサイト独自の学習補足です。</p><a href="#about">収録内容を見る →</a></div>`;
 }
 function renderPractice(params, full = false) {
-  if (params.has('subject') && subjectOf(params.get('subject'))) state.filters.subject = params.get('subject');
-  if (params.has('status') && ['all', 'review', 'unseen', 'correct', 'partial'].includes(params.get('status'))) state.filters.status = params.get('status');
-  if (full) state.practiceTab = 'paper';
-  const subjects = `<div class="segmented" aria-label="演習の方法"><button data-action="practice-tab" data-value="single" class="${state.practiceTab === 'single' ? 'active' : ''}" aria-pressed="${state.practiceTab === 'single'}">一問ずつ</button><button data-action="practice-tab" data-value="paper" class="${state.practiceTab === 'paper' ? 'active' : ''}" aria-pressed="${state.practiceTab === 'paper'}">科目別の通し演習</button></div>`;
-  if (state.practiceTab === 'paper') return `${sectionHeading('PAST PAPERS', '一回分に、取り組む。', '途中で正答を見ずに解き、最後にまとめて答え合わせをします。')}${subjects}${resumeBanner()}<div class="filter-strip"><label>科目<select id="paperSubject">${subjectOptions(state.filters.subject)}</select></label><p>制限時間は設けていません。目安は理論・電力・機械90分、法規65分です。</p></div><div class="paper-grid">${state.data.papers.filter(paper => state.filters.subject === 'all' || paper.subject === state.filters.subject).map(paper => `<article class="paper-card"><span class="subject-pill subject-${paper.subject}">${paper.subjectLabel}</span><h2>${paper.era}${paper.termLabel}</h2><p>${paperQuestions(paper).length}大問 · ${paper.subject === 'law' ? 16 : 20}解答欄 · 100点満点</p><p class="muted">${paper.optionalGroups.length ? '問17・18は、どちらか一方を選択。' : 'すべての問題を解答。'}目安${paper.minutes}分</p><button class="button secondary" data-action="start-paper" data-id="${paper.id}">この回を解く <span aria-hidden="true">→</span></button></article>`).join('')}</div>`;
+  if (params.has('subject') || params.has('status')) {
+    state.filters = { subject: subjectOf(params.get('subject')) ? params.get('subject') : 'all', paper: 'all', status: ['all', 'review', 'unseen', 'correct', 'partial'].includes(params.get('status')) ? params.get('status') : 'all', section: 'all' };
+  }
+  const practiceTab = full ? 'paper' : 'single';
+  const subjects = `<div class="segmented" aria-label="演習の方法"><button data-action="practice-tab" data-value="single" class="${practiceTab === 'single' ? 'active' : ''}" aria-pressed="${practiceTab === 'single'}">一問ずつ</button><button data-action="practice-tab" data-value="paper" class="${practiceTab === 'paper' ? 'active' : ''}" aria-pressed="${practiceTab === 'paper'}">科目別の通し演習</button></div>`;
+  if (practiceTab === 'paper') return `${sectionHeading('PAST PAPERS', '一回分に、取り組む。', '途中で正答を見ずに解き、最後にまとめて答え合わせをします。')}${subjects}${resumeBanner()}<div class="filter-strip"><label>科目<select id="paperSubject">${subjectOptions(state.filters.subject)}</select></label><p>制限時間は設けていません。目安は理論・電力・機械90分、法規65分です。</p></div><div class="paper-grid">${state.data.papers.filter(paper => state.filters.subject === 'all' || paper.subject === state.filters.subject).map(paper => `<article class="paper-card"><span class="subject-pill subject-${paper.subject}">${paper.subjectLabel}</span><h2>${paper.era}${paper.termLabel}</h2><p>${paperQuestions(paper).length}大問 · ${paper.subject === 'law' ? 16 : 20}解答欄 · 100点満点</p><p class="muted">${paper.optionalGroups.length ? '問17・18は、どちらか一方を選択。' : 'すべての問題を解答。'}目安${paper.minutes}分</p><button class="button secondary" data-action="start-paper" data-id="${paper.id}">この回を解く <span aria-hidden="true">→</span></button></article>`).join('')}</div>`;
   const papers = state.data.papers.filter(paper => state.filters.subject === 'all' || paper.subject === state.filters.subject);
   if (state.filters.paper !== 'all' && !papers.some(paper => paper.id === state.filters.paper)) state.filters.paper = 'all';
   const filtered = filterQuestions(state.index.questions, state.history, state.filters);
+  const view = pageSlice(filtered, 'practice', 30);
   return `${sectionHeading('PRACTICE', '一問ずつ、確かな理解へ。', '科目や実施回を選び、自分のペースで答え合わせ。わからない問題は、要点を見て考えられます。')}${subjects}${resumeBanner()}<section class="filter-card" aria-label="出題条件"><div class="filters"><label>科目<select id="filterSubject">${subjectOptions(state.filters.subject)}</select></label><label>実施回<select id="filterPaper"><option value="all">すべての実施回</option>${papers.map(paper => `<option value="${paper.id}" ${state.filters.paper === paper.id ? 'selected' : ''}>${paperLabel(paper)}</option>`).join('')}</select></label><label>取り組み状況<select id="filterStatus">${Object.entries({ all: 'すべて', unseen: '未回答', review: '復習候補', correct: '自力で正解済み', partial: '枝問が回答途中' }).map(([value, label]) => `<option value="${value}" ${state.filters.status === value ? 'selected' : ''}>${label}</option>`).join('')}</select></label><label>問題区分<select id="filterSection"><option value="all" ${state.filters.section === 'all' ? 'selected' : ''}>A・B両方</option><option value="A" ${state.filters.section === 'A' ? 'selected' : ''}>A問題</option><option value="B" ${state.filters.section === 'B' ? 'selected' : ''}>B問題</option></select></label></div><div class="filter-bottom"><p><strong>${filtered.length}</strong> 大問が対象です</p><div class="button-row"><label class="inline-label">出題数<select id="questionCount"><option value="5">5大問</option><option value="10" selected>10大問</option><option value="all">すべて</option></select></label><button class="button primary" data-action="start-filtered" ${!filtered.length ? 'disabled' : ''}>この条件で始める <span aria-hidden="true">→</span></button></div></div></section>
-  ${!filtered.length ? '<div class="empty-state"><span aria-hidden="true">✓</span><h2>この条件の問題はありません。</h2><p>科目や取り組み状況を変えてみてください。</p><button class="button secondary" data-action="clear-filters">条件をリセット</button></div>' : `<div class="section-title compact"><h2>問題を選んで始める</h2><span class="muted">${filtered.length > 30 ? '先頭30大問を表示しています。' : `${filtered.length}大問`}</span></div><div class="question-list">${filtered.slice(0, 30).map(question => questionRow(question)).join('')}</div>`}`;
+  ${!filtered.length ? '<div class="empty-state"><span aria-hidden="true">✓</span><h2>この条件の問題はありません。</h2><p>科目や取り組み状況を変えてみてください。</p><button class="button secondary" data-action="clear-filters">条件をリセット</button></div>' : `<div class="section-title compact"><h2>問題を選んで始める</h2><span class="muted">${view.start}〜${view.end} / ${filtered.length}大問</span></div><div class="question-list">${view.items.map(question => questionRow(question)).join('')}</div>${pagination('practice', view, '問題一覧')}`}`;
 }
 function questionRow(question) {
   const paper = state.index.papers.get(question.paperId);
   const status = questionStatus(question, state.history);
   return `<button class="question-row" data-action="start-question" data-id="${question.id}"><span class="subject-pill subject-${question.subject}">${paper.subjectLabel}</span><span class="question-row-title"><strong>${paper.era}${paper.termLabel} 問${question.number}</strong><small>${question.section}問題${question.answers.length > 1 ? ' · (a)(b)' : ''}${state.history.bookmarks.includes(question.id) ? ' · ★ 保存済み' : ''}</small></span><span class="status-tag status-${status}">${statusLabel[status]}</span><span aria-hidden="true">→</span></button>`;
 }
+function relatedNoteLinks(note) {
+  const related = [...new Set(note.related || [])].map(id => state.notes.find(item => item.id === id)).filter(item => item && item.id !== note.id);
+  if (!related.length) return '';
+  return `<nav class="note-links" aria-label="${escape(note.title)}に関連する要点ノート"><h4>関連する要点ノート</h4><ul>${related.map(item => `<li><a href="#notes?subject=${encodeURIComponent(item.subject)}&id=${encodeURIComponent(item.id)}">${escape(subjectOf(item.subject)?.label)} · ${escape(item.title)} →</a></li>`).join('')}</ul></nav>`;
+}
 function noteBody(note, compact = false, skipIntro = false) {
-  return `${skipIntro ? '' : `<p class="note-lead">${escape(note.lead)}</p>`}${note.situation ? `<div class="note-situation"><h4>どんな場面で使うか</h4><p>${escape(note.situation)}</p></div>` : ''}${note.explanation?.map(paragraph => `<p class="note-paragraph">${escape(paragraph)}</p>`).join('') || ''}${note.quantities?.length ? `<h4>ここで使う量と記号</h4><div class="table-scroll quantity-table"><table><thead><tr><th scope="col">記号・量</th><th scope="col">何を表すか</th><th scope="col">単位</th></tr></thead><tbody>${note.quantities.map(quantity => `<tr><th scope="row"><span class="quantity-symbol">${escape(quantity.symbol)}</span><br>${escape(quantity.name)}</th><td>${escape(quantity.meaning)}</td><td>${escape(quantity.unit)}</td></tr>`).join('')}</tbody></table></div>` : ''}${note.formula ? `<h4>関係を式にすると</h4><div class="formula">${escape(note.formula)}</div>${note.formulaReading ? `<p class="formula-reading">${escape(note.formulaReading)}</p>` : ''}` : ''}<h4>考える順序</h4><ol>${note.steps.map(step => `<li>${escape(step)}</li>`).join('')}</ol><div class="condition"><strong>使うときの条件</strong><p>${escape(note.conditions)}</p></div>${note.example ? `<div class="worked-example"><h4>具体例で考える</h4><p>${escape(note.example.prompt)}</p>${note.example.steps?.length ? `<ol>${note.example.steps.map(step => `<li>${escape(step)}</li>`).join('')}</ol>` : ''}<p class="example-solution">${escape(note.example.solution)}</p></div>` : ''}${note.pitfall ? `<p class="pitfall"><strong>取り違えやすい点</strong>${escape(note.pitfall)}</p>` : ''}${note.selfCheck ? `<details class="self-check"><summary>理解を確かめる：${escape(note.selfCheck.prompt)}</summary><p>${escape(note.selfCheck.answer)}</p></details>` : ''}${!compact && note.sources?.length ? `<div class="note-sources">確認資料：${note.sources.map(source => `<a href="${escape(source.url)}" target="_blank" rel="noopener noreferrer">${escape(source.label)} ↗</a>`).join(' · ')}</div>` : ''}`;
+  return `${skipIntro ? '' : `<p class="note-lead">${escape(note.lead)}</p>`}${note.situation ? `<div class="note-situation"><h4>どんな場面で使うか</h4><p>${escape(note.situation)}</p></div>` : ''}${note.explanation?.map(paragraph => `<p class="note-paragraph">${escape(paragraph)}</p>`).join('') || ''}${note.quantities?.length ? `<h4>ここで使う量と記号</h4><div class="table-scroll quantity-table"><table><thead><tr><th scope="col">記号・量</th><th scope="col">何を表すか</th><th scope="col">単位</th></tr></thead><tbody>${note.quantities.map(quantity => `<tr><th scope="row"><span class="quantity-symbol">${escape(quantity.symbol)}</span><br>${escape(quantity.name)}</th><td>${escape(quantity.meaning)}</td><td>${escape(quantity.unit)}</td></tr>`).join('')}</tbody></table></div>` : ''}${note.formula ? `<h4>関係を式にすると</h4><div class="formula">${escape(note.formula)}</div>${note.formulaReading ? `<p class="formula-reading">${escape(note.formulaReading)}</p>` : ''}` : ''}<h4>考える順序</h4><ol>${note.steps.map(step => `<li>${escape(step)}</li>`).join('')}</ol><div class="condition"><strong>使うときの条件</strong><p>${escape(note.conditions)}</p></div>${note.example ? `<div class="worked-example"><h4>具体例で考える</h4><p>${escape(note.example.prompt)}</p>${note.example.steps?.length ? `<ol>${note.example.steps.map(step => `<li>${escape(step)}</li>`).join('')}</ol>` : ''}<p class="example-solution">${escape(note.example.solution)}</p></div>` : ''}${note.pitfall ? `<p class="pitfall"><strong>取り違えやすい点</strong>${escape(note.pitfall)}</p>` : ''}${note.selfCheck ? `<details class="self-check"><summary>理解を確かめる：${escape(note.selfCheck.prompt)}</summary><p>${escape(note.selfCheck.answer)}</p></details>` : ''}${!compact && note.sources?.length ? `<div class="note-sources">確認資料：${note.sources.map(source => `<a href="${escape(source.url)}" target="_blank" rel="noopener noreferrer">${escape(source.label)} ↗</a>`).join(' · ')}</div>` : ''}${relatedNoteLinks(note)}`;
 }
 function renderNotes(params) {
   if (params.has('subject') && (params.get('subject') === 'all' || subjectOf(params.get('subject')))) state.noteSubject = params.get('subject');
@@ -140,10 +171,10 @@ function answerDetail(question, choices, assisted = false) {
     return `<div class="answer-result ${correct ? 'is-correct' : 'is-wrong'}"><strong>${answer.part ? `(${answer.part}) ` : ''}${correct ? '正解です' : selected ? 'もう一度、考えてみよう' : '今回は未回答'}</strong><span>あなたの回答：${selected || '—'} <span aria-hidden="true">/</span> 公式正答：<b>${answer.correct}</b>（${answer.points}点）</span></div>`;
   }).join('')}</div>`;
 }
-function notesForQuestion(question, limit = 3) {
+function notesForQuestion(question, limit = Infinity) {
   const explanation = state.explanations[question.id];
   if (Array.isArray(explanation?.noteIds)) return explanation.noteIds.map(id => state.notes.find(note => note.id === id)).filter(Boolean).slice(0, limit);
-  return relatedNotes(question, state.notes, limit);
+  return relatedNotes(question, state.notes, Math.min(limit, 3));
 }
 function explanationMarkup(question) {
   const explanation = state.explanations[question.id];
@@ -164,23 +195,25 @@ function renderSession() {
   return `<div class="session-top"><a class="text-link" href="#practice">← 条件選択に戻る</a><span class="session-type">${isPaper ? '通し演習 · 最後にまとめて採点' : '一問ずつ · その場で答え合わせ'}</span></div><div class="session-heading"><div><p class="eyebrow">${paper.era}${paper.termLabel} · ${paper.subjectLabel} · ${question.section}問題</p><h1>問${question.number}<span>${active.index + 1} / ${active.questionIds.length} 大問目</span></h1></div><div class="session-tools"><button class="icon-button ${bookmarked ? 'selected' : ''}" data-action="bookmark" aria-pressed="${bookmarked}">${bookmarked ? '★ 保存済み' : '☆ 保存する'}</button>${isPaper ? `<button class="icon-button ${flagged ? 'selected' : ''}" data-action="flag" aria-pressed="${flagged}">${flagged ? '⚑ 見直し中' : '⚐ 見直し'}</button>` : ''}</div></div>
   ${isPaper && paper.optionalGroups.length ? `<div class="optional-bar"><p><strong>選択問題</strong> 問17・問18のどちらか一方を採点します。</p><div class="segmented small"><button data-action="optional" data-value="17" aria-pressed="${active.optional === 17}" class="${active.optional === 17 ? 'active' : ''}">問17を選択</button><button data-action="optional" data-value="18" aria-pressed="${active.optional === 18}" class="${active.optional === 18 ? 'active' : ''}">問18を選択</button></div></div>` : ''}
   ${question.subject === 'law' ? '<p class="law-note">法規は出題当時の公式正答で採点します。現行法令の確認とは分けて学習してください。</p>' : ''}
-  <div class="exercise-layout"><section class="problem-panel" aria-label="公式問題"><div class="problem-toolbar"><span>公式問題 · 図と選択肢</span><button class="text-link" data-action="enlarge">拡大して読む ↗</button></div>${imageMarkup(question)}<details class="text-alternative"><summary>問題文の抽出テキスト</summary><p>図・数式・上下付きの配置は、上の問題画像と原本PDFで確認してください。</p>${question.textUnavailable ? '<p>この原本は画像PDFのため、抽出テキストはありません。上の画像または原本PDFで問題を読めます。</p>' : `<pre>${escape(question.text)}</pre>`}</details><div class="problem-source">出典：${paper.era}${paper.termLabel} 第三種電気主任技術者試験 ${paper.subjectLabel} 問${question.number}。原本を画像化・切り出し。<a href="${escape(paper.pdf)}" target="_blank" rel="noopener">原本PDF ↗</a></div></section><aside class="answer-panel"><div class="answer-card"><p class="eyebrow">YOUR ANSWER</p><h2>${graded ? '答え合わせ' : '解答を選ぶ'}</h2><p class="muted">${question.answers.length > 1 ? '(a)・(b)の両方を選びます。' : '画像の選択肢(1)〜(5)から選びます。'}</p>${question.answers.map(answer => `<fieldset class="answer-group"><legend>${answer.part ? `(${answer.part})` : '解答'} <span>${answer.points}点</span></legend><div class="choice-grid">${[1, 2, 3, 4, 5].map(choice => `<label class="choice ${graded && answer.correct === choice ? 'correct-choice' : ''}"><input type="radio" name="choice-${answer.part || 'main'}" data-key="${answerKey(question, answer.part)}" value="${choice}" ${active.choices[answerKey(question, answer.part)] === choice ? 'checked' : ''} ${graded ? 'disabled' : ''}><span>${choice}</span></label>`).join('')}</div></fieldset>`).join('')}${!isPaper && !graded ? `<button class="button primary full" data-action="check" ${complete ? '' : 'disabled'}>答え合わせをする</button><button class="text-link unknown" data-action="unknown">わからないので、解説を見る</button>` : isPaper ? `<p class="saved-note" id="answerSaveNote">${complete ? '✓ この大問の解答を保存しました。' : '選ぶたびに、途中の解答を保存します。'}</p>` : answerDetail(question, active.choices, active.assisted[question.id])}${!isPaper && !graded && notesForQuestion(question, 1).length ? `<details class="hint" id="hintPanel"><summary>要点を見て考える（補助あり）</summary><p>この問題は「補助あり」として記録します。</p>${notesForQuestion(question, 1).map(note => `<h3>${escape(note.title)}</h3>${noteBody(note, true)}`).join('')}</details>` : ''}</div><div class="question-navigation"><button class="button secondary" data-action="previous" ${active.index === 0 ? 'disabled' : ''}>← 前の大問</button><button class="button ${graded ? 'primary' : 'secondary'}" data-action="next">${active.index === active.questionIds.length - 1 ? isPaper ? '採点へ進む' : '結果を見る' : '次の大問 →'}</button></div>${isPaper ? `<button class="text-link" data-action="next-unanswered">未回答へ移動（${unanswered}大問）</button><button class="button primary full finish-button" data-action="finish-paper">通し演習を採点する</button>` : ''}</aside></div>
+  <div class="exercise-layout"><section class="problem-panel" aria-label="公式問題"><div class="problem-toolbar"><span>公式問題 · 図と選択肢</span><button class="text-link" data-action="enlarge">拡大して読む ↗</button></div>${imageMarkup(question)}<details class="text-alternative"><summary>問題文の抽出テキスト</summary><p>図・数式・上下付きの配置は、上の問題画像と原本PDFで確認してください。</p>${question.textUnavailable ? '<p>この原本は画像PDFのため、抽出テキストはありません。上の画像または原本PDFで問題を読めます。</p>' : `<pre>${escape(question.text)}</pre>`}</details><div class="problem-source">出典：${paper.era}${paper.termLabel} 第三種電気主任技術者試験 ${paper.subjectLabel} 問${question.number}。原本を画像化・切り出し。<a href="${escape(paper.pdf)}" target="_blank" rel="noopener">原本PDF ↗</a></div></section><aside class="answer-panel"><div class="answer-card"><p class="eyebrow">YOUR ANSWER</p><h2>${graded ? '答え合わせ' : '解答を選ぶ'}</h2><p class="muted">${question.answers.length > 1 ? '(a)・(b)の両方を選びます。' : '画像の選択肢(1)〜(5)から選びます。'}</p>${question.answers.map(answer => `<fieldset class="answer-group"><legend>${answer.part ? `(${answer.part})` : '解答'} <span>${answer.points}点</span></legend><div class="choice-grid">${[1, 2, 3, 4, 5].map(choice => `<label class="choice ${graded && answer.correct === choice ? 'correct-choice' : ''}"><input type="radio" name="choice-${answer.part || 'main'}" data-key="${answerKey(question, answer.part)}" value="${choice}" ${active.choices[answerKey(question, answer.part)] === choice ? 'checked' : ''} ${graded ? 'disabled' : ''}><span>${choice}</span></label>`).join('')}</div></fieldset>`).join('')}${!isPaper && !graded ? `<button class="button primary full" data-action="check" ${complete ? '' : 'disabled'}>答え合わせをする</button><button class="text-link unknown" data-action="unknown">わからないので、解説を見る</button>` : isPaper ? `<p class="saved-note" id="answerSaveNote">${answerSaveMessage(complete)}</p>` : answerDetail(question, active.choices, active.assisted[question.id])}${!isPaper && !graded && notesForQuestion(question, 1).length ? `<details class="hint" id="hintPanel"><summary>要点を見て考える（補助あり）</summary><p>この問題は「補助あり」として記録します。</p>${notesForQuestion(question, 1).map(note => `<h3>${escape(note.title)}</h3>${noteBody(note, true)}`).join('')}</details>` : ''}</div><div class="question-navigation"><button class="button secondary" data-action="previous" ${active.index === 0 ? 'disabled' : ''}>← 前の大問</button><button class="button ${graded ? 'primary' : 'secondary'}" data-action="next">${active.index === active.questionIds.length - 1 ? isPaper ? '採点へ進む' : '結果を見る' : '次の大問 →'}</button></div>${isPaper ? `<button class="text-link" data-action="next-unanswered">未回答へ移動（${unanswered}大問）</button><button class="button primary full finish-button" data-action="finish-paper">通し演習を採点する</button>` : ''}</aside></div>
   ${graded && !isPaper ? `<section class="feedback-panel">${explanationMarkup(question)}<div class="official-answer-link">公式解答：<a href="${escape(paper.answerPdf)}" target="_blank" rel="noopener">${paper.era}${paper.termLabel} 解答PDF ↗</a></div></section>` : ''}
   <section class="jump-section" aria-label="問題番号へ移動"><div class="section-title compact"><h2>問題を移動</h2><p class="muted">${isPaper ? '● 回答済み · ⚑ 見直し' : '✓ 答え合わせ済み'}</p></div><div class="jump-grid">${active.questionIds.map((id, index) => {
     const item = state.index.questions.get(id);
     const done = isPaper ? item.answers.every(answer => active.choices[answerKey(item, answer.part)]) : active.graded[id];
     return `<button class="jump-button ${index === active.index ? 'current' : ''} ${done ? 'done' : ''}" data-action="jump" data-index="${index}" aria-label="問${item.number}${done ? ' 回答済み' : ''}${active.flags.includes(id) ? ' 見直し' : ''}" ${index === active.index ? 'aria-current="step"' : ''}>${item.number}${active.flags.includes(id) ? '<small>⚑</small>' : done ? `<small>${isPaper ? '●' : '✓'}</small>` : ''}</button>`;
-  }).join('')}</div><p class="muted save-description">進み具合と解答はこのブラウザー内に保存します。「続きから解く」で再開できます。</p></section>`;
+  }).join('')}</div><p class="muted save-description">${saveDescription()}</p></section>`;
 }
 function renderHistory() {
   const stats = statistics(state.index.questions, state.history);
   const bookmarks = state.history.bookmarks.map(id => state.index.questions.get(id)).filter(Boolean);
+  const bookmarkView = pageSlice(bookmarks, 'bookmarks', 30);
+  const recordView = pageSlice([...state.history.records].reverse(), 'records', 20);
   const subjects = SUBJECTS.map(subject => {
     const subset = new Map([...state.index.questions].filter(([, question]) => question.subject === subject.id));
     const s = statistics(subset, state.history);
     return `<tr><th scope="row">${subject.label}</th><td>${s.answered}</td><td>${s.firstCorrect} / ${s.firstTotal}</td><td>${s.review}大問</td><td><a class="text-link" href="#practice?subject=${subject.id}&status=review">復習へ →</a></td></tr>`;
   }).join('');
-  return `${sectionHeading('LEARNING LOG', '積み重ねを、次の一問へ。', '記録はこのブラウザーに保存します。初回の回答は、解き直しても置き換わりません。')}<div class="stat-grid"><div><span>累計の回答</span><strong>${stats.attempts}<small>回</small></strong></div><div><span>初回・補助なしの正解</span><strong>${stats.firstCorrect}<small>/ ${stats.firstTotal}欄</small></strong></div><div><span>復習候補</span><strong>${stats.review}<small>大問</small></strong></div></div><section class="section-block"><h2>科目ごとの記録</h2><div class="table-scroll"><table><thead><tr><th>科目</th><th>回答済み欄</th><th>初回の自力正解 / 初回回答</th><th>復習候補</th><th>取り組む</th></tr></thead><tbody>${subjects}</tbody></table></div><p class="muted">「要点を見て考える」を開いた回答と、未回答で解説を開いた回答は、初回の自力正解には含みません。</p></section><section class="section-block"><div class="section-title"><h2>通し演習の結果</h2><span class="muted">新しいものから表示</span></div>${state.history.records.length ? `<div class="records-list">${[...state.history.records].reverse().slice(0, 20).map(record => { const paper = state.index.papers.get(record.paperId); const grade = gradePaper(paper, record.choices, record.optional); return `<button class="record-row" data-action="show-result" data-id="${escape(record.id)}"><span><strong>${paperLabel(paper)}</strong><small>${dateLabel(record.endedAt)}</small></span><span class="record-score">${grade.score}<small>/ ${grade.maximum}点</small></span><span aria-hidden="true">→</span></button>`; }).join('')}</div>` : '<p class="empty-inline">通し演習を採点すると、ここに結果が残ります。</p>'}</section><section class="section-block"><div class="section-title"><h2>保存した問題</h2><span>${bookmarks.length}大問</span></div>${bookmarks.length ? `<div class="question-list">${bookmarks.slice(0, 30).map(questionRow).join('')}</div>` : '<p class="empty-inline">問題画面の「☆ 保存する」で、あとから解きたい問題を残せます。</p>'}</section><section class="export-card"><p class="eyebrow">YOUR DATA</p><h2>履歴を、持ち出す。</h2><p>JSONファイルに書き出すと、別のブラウザーでも回答と保存した問題を引き継げます。取り込みは既存の回答履歴に追加し、重複する記録は増やしません。解きかけの演習は取り込み対象外です。</p><div class="button-row"><button class="button primary" data-action="export-json">JSONで保存</button><button class="button secondary" data-action="export-text">テキストで保存</button><label class="button secondary file-label">JSONを取り込む<input type="file" id="historyImport" accept=".json,application/json"></label>${state.corruptRaw ? '<button class="button secondary" data-action="export-corrupt">読めなかった元データを退避</button>' : ''}</div><div class="danger-zone"><p>回答・途中の演習・保存した問題を消去します。必要な履歴は先に保存してください。</p><button class="text-link danger" data-action="reset-history">このブラウザーの記録を消去</button></div></section>`;
+  return `${sectionHeading('LEARNING LOG', '積み重ねを、次の一問へ。', state.canSave ? '記録はこのブラウザーに保存します。初回の回答は、解き直しても置き換わりません。' : 'ブラウザーには保存できていません。このページを閉じる前にJSONで書き出してください。')}<div class="stat-grid"><div><span>累計の回答</span><strong>${stats.attempts}<small>回</small></strong></div><div><span>初回・補助なしの正解</span><strong>${stats.firstCorrect}<small>/ ${stats.firstTotal}欄</small></strong></div><div><span>復習候補</span><strong>${stats.review}<small>大問</small></strong></div></div><section class="section-block"><h2>科目ごとの記録</h2><div class="table-scroll"><table><thead><tr><th>科目</th><th>回答済み欄</th><th>初回の自力正解 / 初回回答</th><th>復習候補</th><th>取り組む</th></tr></thead><tbody>${subjects}</tbody></table></div><p class="muted">「要点を見て考える」を開いた回答と、未回答で解説を開いた回答は、初回の自力正解には含みません。</p></section><section class="section-block"><div class="section-title"><h2>通し演習の結果</h2><span class="muted">新しいものから表示</span></div>${state.history.records.length ? `<div class="records-list">${recordView.items.map(record => { const paper = state.index.papers.get(record.paperId); const grade = gradePaper(paper, record.choices, record.optional); return `<button class="record-row" data-action="show-result" data-id="${escape(record.id)}"><span><strong>${paperLabel(paper)}</strong><small>${dateLabel(record.endedAt)}</small></span><span class="record-score">${grade.score}<small>/ ${grade.maximum}点</small></span><span aria-hidden="true">→</span></button>`; }).join('')}</div>${pagination('records', recordView, '通し演習の結果')}` : '<p class="empty-inline">通し演習を採点すると、ここに結果が残ります。</p>'}</section><section class="section-block"><div class="section-title"><h2>保存した問題</h2><span>${bookmarks.length}大問</span></div>${bookmarks.length ? `<div class="question-list">${bookmarkView.items.map(questionRow).join('')}</div>${pagination('bookmarks', bookmarkView, '保存した問題')}` : '<p class="empty-inline">問題画面の「☆ 保存する」で、あとから解きたい問題を残せます。</p>'}</section><section class="export-card"><p class="eyebrow">YOUR DATA</p><h2>履歴を、持ち出す。</h2><p>JSONファイルに書き出すと、別のブラウザーでも回答・保存した問題・通し演習の結果を引き継げます。取り込みは既存の記録に追加し、重複する記録は増やしません。通し演習の結果は新しい200件を保持します。解きかけの演習は取り込み対象外です。</p><div class="button-row"><button class="button primary" data-action="export-json">JSONで保存</button><button class="button secondary" data-action="export-text">テキストで保存</button><label class="button secondary file-label">JSONを取り込む<input type="file" id="historyImport" accept=".json,application/json"></label>${state.corruptRaw ? '<button class="button secondary" data-action="export-corrupt">読めなかった元データを退避</button>' : ''}</div><div class="danger-zone"><p>回答・途中の演習・保存した問題を消去します。必要な履歴は先に保存してください。</p><button class="text-link danger" data-action="reset-history">このブラウザーの記録を消去</button></div></section>`;
 }
 function renderResult(params) {
   const record = state.history.records.find(item => item.id === (params.get('id') || state.resultId));
@@ -263,8 +296,9 @@ document.addEventListener('click', async event => {
   const action = button.dataset.action;
   const active = state.history.active;
   switch (action) {
-    case 'practice-tab': state.practiceTab = button.dataset.value; if (route().name === 'paper') go('#practice'); else render(); break;
-    case 'clear-filters': state.filters = { subject: 'all', paper: 'all', status: 'all', section: 'all' }; go('#practice'); break;
+    case 'practice-tab': go(button.dataset.value === 'paper' ? '#paper' : '#practice'); break;
+    case 'list-page': { const kind = button.dataset.list; if (!Object.hasOwn(state.pages, kind)) return; state.pages[kind] = Number(button.dataset.page); render(); const pager = document.querySelector(`.list-pagination[data-list="${kind}"]`); pager?.scrollIntoView({ block: 'center' }); pager?.querySelector('.pagination-status')?.focus({ preventScroll: true }); break; }
+    case 'clear-filters': state.pages.practice = 1; state.filters = { subject: 'all', paper: 'all', status: 'all', section: 'all' }; go('#practice'); break;
     case 'start-filtered': { const filtered = filterQuestions(state.index.questions, state.history, state.filters); const count = $('questionCount').value; await beginSession(filtered.slice(0, count === 'all' ? filtered.length : Number(count)).map(question => question.id)); break; }
     case 'start-question': await beginSession([button.dataset.id]); break;
     case 'start-paper': { const paper = state.index.papers.get(button.dataset.id); await beginSession(paperQuestions(paper).map(question => question.id), 'paper', paper.id); break; }
@@ -281,16 +315,16 @@ document.addEventListener('click', async event => {
     case 'show-result': state.resultId = button.dataset.id; go(`#result?id=${encodeURIComponent(state.resultId)}`); window.scrollTo(0, 0); break;
     case 'enlarge': $('enlargedImages').innerHTML = imageMarkup(currentQuestion()); $('imageDialog').showModal(); break;
     case 'close-image': $('imageDialog').close(); break;
-    case 'export-json': download(`denken-history-${new Date().toISOString().slice(0, 10)}.json`, JSON.stringify({ ...state.history, exportedAt: new Date().toISOString() }, null, 2), 'application/json'); notify('履歴JSONを保存しました。'); break;
+    case 'export-json': download(`denken-history-${new Date().toISOString().slice(0, 10)}.json`, JSON.stringify({ ...state.history, exportedAt: new Date().toISOString() }, null, 2), 'application/json'); notify('履歴JSONのダウンロードを開始しました。'); break;
     case 'export-text': download('denken-history.txt', textHistory(), 'text/plain;charset=utf-8'); break;
     case 'export-corrupt': download('denken-history-recovery.txt', state.corruptRaw, 'text/plain;charset=utf-8'); break;
-    case 'reset-history': if (await confirmAction('学習記録を消去しますか？', 'このブラウザーの回答履歴・保存した問題・解きかけの演習・通し演習の結果をすべて消します。取り消せません。必要なら先にJSONで保存してください。', '記録を消去する')) { try { localStorage.removeItem(STORAGE_KEY); state.canSave = true; } catch { state.canSave = false; } state.history = blankHistory(); state.corruptRaw = null; state.lastRaw = null; $('storageNotice').hidden = state.canSave; render(); notify('学習記録を消去しました。'); } break;
+    case 'reset-history': if (await confirmAction('学習記録を消去しますか？', 'このブラウザーの回答履歴・保存した問題・解きかけの演習・通し演習の結果をすべて消します。取り消せません。必要なら先にJSONで保存してください。', '記録を消去する')) { try { localStorage.removeItem(STORAGE_KEY); state.canSave = true; } catch { state.canSave = false; storageNotice('ブラウザーの記録を消去できませんでした。元の記録は残しています。'); notify('記録を消去できませんでした。'); break; } state.history = blankHistory(); state.pages = { practice: 1, bookmarks: 1, records: 1 }; state.corruptRaw = null; state.lastRaw = null; $('storageNotice').hidden = state.canSave; render(); notify('学習記録を消去しました。'); } break;
   }
 });
 document.addEventListener('change', async event => {
   const target = event.target;
   const fields = { filterSubject: 'subject', filterPaper: 'paper', filterStatus: 'status', filterSection: 'section', paperSubject: 'subject' };
-  if (fields[target.id]) { state.filters[fields[target.id]] = target.value; if (target.id === 'filterSubject') state.filters.paper = 'all'; const base = route().name === 'paper' ? '#paper' : '#practice'; if (location.hash.includes('?')) go(base); else render(); return; }
+  if (fields[target.id]) { state.pages.practice = 1; state.filters[fields[target.id]] = target.value; if (target.id === 'filterSubject') state.filters.paper = 'all'; const base = route().name === 'paper' ? '#paper' : '#practice'; if (location.hash.includes('?')) go(base); else render(); return; }
   if (target.id === 'noteSubject') { state.noteSubject = target.value; go('#notes'); return; }
   if (target.matches('input[type="radio"][data-key]')) {
     const active = state.history.active; const question = currentQuestion();
@@ -298,22 +332,39 @@ document.addEventListener('change', async event => {
     active.choices[target.dataset.key] = Number(target.value); save();
     const complete = question.answers.every(answer => active.choices[answerKey(question, answer.part)]);
     const check = document.querySelector('[data-action="check"]'); if (check) check.disabled = !complete;
-    if ($('answerSaveNote')) $('answerSaveNote').textContent = complete ? '✓ この大問の解答を保存しました。' : '✓ 解答を保存しました。もう一方の枝問も選んでください。';
+    if ($('answerSaveNote')) $('answerSaveNote').textContent = answerSaveMessage(complete);
     const jump = document.querySelector(`[data-action="jump"][data-index="${active.index}"]`); if (active.mode === 'paper' && jump) { jump.classList.toggle('done', complete); const small = jump.querySelector('small'); if (!small && complete) jump.insertAdjacentHTML('beforeend', '<small>●</small>'); }
     const unansweredLink = document.querySelector('[data-action="next-unanswered"]'); if (unansweredLink) { const n = active.questionIds.filter(id => !state.index.questions.get(id).answers.every(answer => active.choices[answerKey(id, answer.part)])).length; unansweredLink.textContent = `未回答へ移動（${n}大問）`; }
   }
   if (target.id === 'historyImport' && target.files[0]) {
-    try { if (target.files[0].size > 20_000_000) throw new Error('ファイルが大きすぎます。20MB以下の履歴JSONを選んでください。'); const imported = JSON.parse(await target.files[0].text()); const result = mergeHistory(state.history, imported, state.index.questions); state.history = result.history; save(); render(); notify(`${result.added}件の回答を追加しました。`); }
+    try { if (target.files[0].size > 20_000_000) throw new Error('ファイルが大きすぎます。20MB以下の履歴JSONを選んでください。'); const imported = validateHistory(JSON.parse(await target.files[0].text()), state.index.questions, state.index.papers); const result = mergeHistory(state.history, imported, state.index.questions, state.index.papers); state.history = result.history; const saved = save({ ids: imported.bookmarks, add: true }); render(); notify(`${result.added}件の回答・${result.addedRecords}件の通し演習結果を追加しました。${saved ? '' : 'ブラウザーには保存できていません。JSONを書き出してください。'}`); }
     catch (error) { notify(`取り込めませんでした。${error.message}`); }
     target.value = '';
   }
 });
-window.addEventListener('hashchange', () => { render(); window.scrollTo(0, 0); $('main').focus({ preventScroll: true }); });
+window.addEventListener('hashchange', () => { const next = route(); if (next.name === 'practice' && (next.params.has('subject') || next.params.has('status'))) state.pages.practice = 1; render(); window.scrollTo(0, 0); $('main').focus({ preventScroll: true }); });
 window.addEventListener('storage', event => {
-  if (event.key !== STORAGE_KEY || !state.index || !state.canSave) return;
-  if (event.newValue === null) { state.canSave = false; storageNotice('別のタブで学習記録が消去されました。このタブを再読み込みするまで自動保存を止めています。必要な履歴は書き出せます。'); return; }
-  try { mergeStored(event.newValue); if (route().name !== 'session') render(); notify('別のタブの回答履歴を統合しました。解きかけの演習は同時に複数タブで操作しないでください。'); }
-  catch { state.canSave = false; storageNotice('別のタブの記録を統合できません。元データを上書きせず、このタブの自動保存を止めています。履歴を書き出して確認してください。'); }
+  if ((event.key !== STORAGE_KEY && event.key !== null) || (event.storageArea && event.storageArea !== localStorage) || !state.index || !state.canSave) return;
+  // A deletion is a boundary: never revive pre-deletion history automatically,
+  // even if another tab has already created a new store before this event arrives.
+  if (event.newValue === null) { pauseAfterDeletion(); return; }
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (raw === null) { pauseAfterDeletion(); return; }
+    let changed = false;
+    // Late snapshots can contain immutable answers/results absent from the latest
+    // concurrent write. Recover those, but never replay stale bookmark state.
+    if (event.newValue && event.newValue !== raw && event.newValue !== state.lastRaw) {
+      const merged = mergeHistory(state.history, JSON.parse(event.newValue), state.index.questions, state.index.papers);
+      state.history.attempts = merged.history.attempts;
+      state.history.records = merged.history.records;
+      changed = merged.added > 0 || merged.addedRecords > 0;
+    }
+    if (raw !== state.lastRaw) { mergeStored(raw); changed = true; }
+    if (!changed) return;
+    if (route().name !== 'session') render();
+    notify('別のタブの回答履歴を統合しました。解きかけの演習は同時に複数タブで操作しないでください。');
+  } catch { state.canSave = false; storageNotice('別のタブの記録を統合できません。元データを上書きせず、このタブの自動保存を止めています。履歴を書き出して確認してください。'); }
 });
 
 async function boot() {
